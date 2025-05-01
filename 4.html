@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finger Shooter</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial, sans-serif;
+            background-color: #111;
+            color: white;
+            margin: 0;
+            overflow: hidden;
+        }
+        video {
+            position: fixed;
+            bottom: 8%;
+            left: 50%;
+            width: 120px;
+            height: 120px;
+            border: 4px solid #00ff00;
+            border-radius: 50%;
+            object-fit: cover;
+            transform: translate(-50%, -50%);
+            z-index: 2;
+        }
+        canvas {
+            position: fixed;
+            top: 50%;
+            left: 50%; 
+            z-index: 1;
+            transform: translate(-50%, -50%); 
+            border: 4px solid #00ff00;
+            border-radius: 22px;
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+        button {
+            font-size: 16px;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #00cc00;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            text-transform: uppercase;
+            font-weight: bold;
+            letter-spacing: 1px;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+            transition: all 0.2s;
+        }
+        button:hover {
+            background-color: #00ff00;
+            transform: scale(1.05);
+        }
+        button:disabled {
+            background-color: #555;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+        #status {
+            font-size: 18px;
+            margin-top: 10px;
+            font-weight: bold;
+            color: white;
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+            text-shadow: 0 0 10px rgba(0, 255, 0, 0.7);
+        }
+        #sound-level {
+            position: fixed;
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            height: 20px;
+            background-color: #333;
+            border-radius: 10px;
+            overflow: hidden;
+            z-index: 3;
+            box-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+        }
+        #sound-level-bar {
+            height: 100%;
+            width: 0%;
+            background-color: #ff0000;
+            transition: width 0.1s;
+        }
+        #calibration-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 10;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .target {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: red;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-weight: bold;
+            font-size: 24px;
+            box-shadow: 0 0 30px #ff0000;
+            transition: all 0.3s;
+        }
+        #target-instructions {
+            font-size: 24px;
+            margin-bottom: 40px;
+            color: white;
+            text-align: center;
+            padding: 0 20px;
+            text-shadow: 0 0 10px rgba(0, 255, 0, 0.7);
+        }
+        .crosshair {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 2px solid lime;
+            display: none;
+            z-index: 5;
+            pointer-events: none;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.7);
+        }
+        .crosshair::before, .crosshair::after {
+            content: "";
+            position: absolute;
+            background-color: lime;
+        }
+        .crosshair::before {
+            width: 2px;
+            height: 40px;
+            left: 19px;
+            top: 0;
+        }
+        .crosshair::after {
+            width: 40px;
+            height: 2px;
+            left: 0;
+            top: 19px;
+        }
+        #game-container {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 4;
+        }
+        #score-display {
+            position: fixed;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 28px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 0 0 10px rgba(0, 255, 0, 0.7);
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <div id="controls">
+        <button id="start-btn" onclick="startTracking()">Start Tracking</button>
+        <button id="calibrate-btn" onclick="startCalibration()" disabled>Calibrate Gun</button>
+        <button id="game-btn" onclick="startGame()" disabled>Start Game</button>
+    </div>
+
+    <p id="status">Tracking status: <span id="tracking-status">Loading model...</span></p>
+    
+    <div id="sound-level">
+        <div id="sound-level-bar"></div>
+    </div>
+
+    <div id="calibration-container">
+        <div id="target-instructions">Point your index finger at each target and make a loud noise to shoot!</div>
+    </div>
+
+    <div id="crosshair" class="crosshair"></div>
+    <div id="game-container"></div>
+
+    <script>
+        let video = document.getElementById("video");
+        let canvas = document.getElementById("canvas");
+        let ctx = canvas.getContext("2d");
+        let statusText = document.getElementById("tracking-status");
+        let soundLevelBar = document.getElementById("sound-level-bar");
+        let calibrationContainer = document.getElementById("calibration-container");
+        let crosshair = document.getElementById("crosshair");
+        let gameContainer = document.getElementById("game-container");
+        
+        let detector;
+        let tracking = false;
+        let audioContext;
+        let mediaStreamSource;
+        let analyser;
+        let audioData;
+        let soundThreshold = 0.2;
+        let soundLevel = 0;
+        let lastShotTime = 0;
+        let shotCooldown = 500;
+        
+        let calibrationActive = false;
+        let calibrationPoints = [];
+        let currentCalibrationTarget = 0;
+        const totalCalibrationTargets = 5;
+        let calibrationMatrix = null;
+        
+        let indexFingerTip = null;
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    width: 640, 
+                    height: 480
+                } 
+            });
+            video.srcObject = stream;
+            return new Promise(resolve => video.onloadeddata = resolve);
+        }
+
+        async         async function setupAudio() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                mediaStreamSource = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                mediaStreamSource.connect(analyser);
+                
+                analyser.fftSize = 256;
+                audioData = new Uint8Array(analyser.frequencyBinCount);
+                
+                const soundLevelLabel = document.createElement("div");
+                soundLevelLabel.style.position = "fixed";
+                soundLevelLabel.style.bottom = "95px";
+                soundLevelLabel.style.left = "50%";
+                soundLevelLabel.style.transform = "translateX(-50%)";
+                soundLevelLabel.style.color = "white";
+                soundLevelLabel.style.fontSize = "14px";
+                soundLevelLabel.style.textShadow = "0 0 5px rgba(255, 255, 255, 0.7)";
+                soundLevelLabel.innerHTML = "Make noise to shoot";
+                document.body.appendChild(soundLevelLabel);
+                
+                updateSoundLevel();
+            } catch (error) {
+                console.error("Error accessing microphone:", error);
+                statusText.innerText = "Error accessing microphone: " + error.message;
+            }
+        }
+        
+        function updateSoundLevel() {
+            if (!analyser) return;
+            
+            analyser.getByteFrequencyData(audioData);
+            
+            let sum = 0;
+            for (let i = 0; i < audioData.length; i++) {
+                sum += audioData[i];
+            }
+            
+            soundLevel = sum / (audioData.length * 255);
+            soundLevelBar.style.width = (soundLevel * 100) + "%";
+            
+            if (soundLevel > soundThreshold) {
+                soundLevelBar.style.backgroundColor = "#00ff00";
+            } else {
+                soundLevelBar.style.backgroundColor = "#ff0000";
+            }
+            
+            if (soundLevel > soundThreshold && Date.now() - lastShotTime > shotCooldown) {
+                lastShotTime = Date.now();
+                handleShot();
+                
+                const shotSound = new Audio();
+                shotSound.src = "data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAAFAAAGhgCFhYWFhYWFhYWFhYWFhYWFhYWFvb29vb29vb29vb29vb29vb29vb3p6enp6enp6enp6enp6enp6enp6f////////////////////////////////8AAAA8TEFNRTMuOTlyAc0AAAAAAAAAABSAJAJAQgAAgAAAAoaDeS2OAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//sQxAADwAABpAAAACAAANIAAAAQAAAAAA0PDw8PDw8AAwPDwAAAA8PDw8AAAAAA8PDwAAAA8PDw8AAAAADw8PAAAAADw8PAAAAAAA8PDwAAAAPDw8AAAAAA//sQxBID0r0NGjmGbhIAANIOAAAQAPDw8PDw8AAAAAPAAAB4eHh4eHgAgICAgAAAAAAAB4eB4eB4eHgAAABj09PT09PTQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+                shotSound.play();
+            }
+            
+            requestAnimationFrame(updateSoundLevel);
+        }
+        
+        function handleShot() {
+            if (calibrationActive && indexFingerTip) {
+                const targetElement = document.getElementById(`target-${currentCalibrationTarget}`);
+                if (targetElement) {
+                    const targetRect = targetElement.getBoundingClientRect();
+                    const targetX = targetRect.left + targetRect.width / 2;
+                    const targetY = targetRect.top + targetRect.height / 2;
+                    
+                    calibrationPoints.push({
+                        screen: { x: targetX, y: targetY },
+                        camera: { x: indexFingerTip.x, y: indexFingerTip.y }
+                    });
+                    
+                    targetElement.style.backgroundColor = "green";
+                    
+                    setTimeout(() => {
+                        targetElement.remove();
+                        currentCalibrationTarget++;
+                        
+                        if (currentCalibrationTarget < totalCalibrationTargets) {
+                            createCalibrationTarget(currentCalibrationTarget);
+                        } else {
+                            completeCalibration();
+                        }
+                    }, 500);
+                }
+            } else if (calibrationMatrix && indexFingerTip) {
+                const screenPoint = transformPoint(indexFingerTip.x, indexFingerTip.y);
+                createShotEffect(screenPoint.x, screenPoint.y);
+            }
+        }
+        
+        let score = 0;
+        
+        function createShotEffect(x, y) {
+            const shot = document.createElement("div");
+            shot.style.position = "absolute";
+            shot.style.left = `${x - 15}px`;
+            shot.style.top = `${y - 15}px`;
+            shot.style.width = "30px";
+            shot.style.height = "30px";
+            shot.style.borderRadius = "50%";
+            shot.style.backgroundColor = "rgba(255, 255, 0, 0.8)";
+            shot.style.boxShadow = "0 0 20px yellow";
+            shot.style.zIndex = "5";
+            
+            gameContainer.appendChild(shot);
+            
+            setTimeout(() => {
+                shot.style.transition = "all 0.3s";
+                shot.style.opacity = "0";
+                shot.style.transform = "scale(2)";
+                setTimeout(() => shot.remove(), 300);
+            }, 50);
+            
+            const targets = document.querySelectorAll(".game-target");
+            targets.forEach(target => {
+                const rect = target.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                const distance = Math.sqrt(Math.pow(centerX - x, 2) + Math.pow(centerY - y, 2));
+                
+                if (distance < rect.width / 2) {
+                    score += 100;
+                    updateScore();
+                    
+                    target.style.backgroundColor = "#00ff00";
+                    target.style.transform = "scale(1.5)";
+                    target.style.boxShadow = "0 0 30px rgba(0, 255, 0, 1)";
+                    
+                    const hitText = document.createElement("div");
+                    hitText.style.position = "absolute";
+                    hitText.style.left = `${centerX}px`;
+                    hitText.style.top = `${centerY - 50}px`;
+                    hitText.style.transform = "translate(-50%, -50%)";
+                    hitText.style.color = "#00ff00";
+                    hitText.style.fontSize = "24px";
+                    hitText.style.fontWeight = "bold";
+                    hitText.style.zIndex = "6";
+                    hitText.style.textShadow = "0 0 10px rgba(0, 255, 0, 0.7)";
+                    hitText.innerText = "HIT!";
+                    document.body.appendChild(hitText);
+                    
+                    setTimeout(() => {
+                        hitText.style.transition = "all 0.5s";
+                        hitText.style.opacity = "0";
+                        hitText.style.top = `${centerY - 100}px`;
+                        setTimeout(() => hitText.remove(), 500);
+                    }, 100);
+                    
+                    setTimeout(() => target.remove(), 500);
+                }
+            });
+        }
+        
+        function startCalibration() {
+            if (!tracking) return;
+            
+            calibrationActive = true;
+            calibrationPoints = [];
+            currentCalibrationTarget = 0;
+            
+            calibrationContainer.style.display = "flex";
+            createCalibrationTarget(currentCalibrationTarget);
+        }
+        
+        function createCalibrationTarget(index) {
+            const target = document.createElement("div");
+            target.id = `target-${index}`;
+            target.className = "target";
+            target.innerText = (index + 1).toString();
+            
+            const positions = [
+                { left: "50%", top: "50%" },
+                { left: "20%", top: "20%" },
+                { left: "80%", top: "20%" },
+                { left: "20%", top: "80%" },
+                { left: "80%", top: "80%" }
+            ];
+            
+            target.style.left = positions[index].left;
+            target.style.top = positions[index].top;
+            target.style.transform = "translate(-50%, -50%)";
+            
+            calibrationContainer.appendChild(target);
+        }
+        
+        function completeCalibration() {
+            calibrationActive = false;
+            calibrationContainer.style.display = "none";
+            
+            if (calibrationPoints.length >= 3) {
+                calculateCalibrationMatrix();
+                document.getElementById("game-btn").disabled = false;
+                statusText.innerText = "Calibration complete! You can start the game.";
+                crosshair.style.display = "block";
+            } else {
+                statusText.innerText = "Calibration failed. Try again.";
+            }
+        }
+        
+        function calculateCalibrationMatrix() {
+            if (calibrationPoints.length < 3) return null;
+            
+            const srcPoints = calibrationPoints.map(point => [point.camera.x, point.camera.y]);
+            const dstPoints = calibrationPoints.map(point => [point.screen.x, point.screen.y]);
+            
+            const matrix = findHomography(srcPoints, dstPoints);
+            calibrationMatrix = matrix;
+            return matrix;
+        }
+        
+        function findHomography(srcPoints, dstPoints) {
+            if (srcPoints.length !== dstPoints.length || srcPoints.length < 4) {
+                return null;
+            }
+            
+            const numPoints = srcPoints.length;
+            const A = [];
+            
+            for (let i = 0; i < numPoints; i++) {
+                const [x, y] = srcPoints[i];
+                const [u, v] = dstPoints[i];
+                
+                A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, -u]);
+                A.push([0, 0, 0, x, y, 1, -v * x, -v * y, -v]);
+            }
+            
+            const AtA = multiplyMatrixTranspose(A, A);
+            const eigenvalues = powerIteration(AtA);
+            
+            const flattenedH = eigenvalues.eigenvector;
+            const H = [
+                [flattenedH[0], flattenedH[1], flattenedH[2]],
+                [flattenedH[3], flattenedH[4], flattenedH[5]],
+                [flattenedH[6], flattenedH[7], flattenedH[8]]
+            ];
+            
+            return H;
+        }
+        
+        function multiplyMatrixTranspose(A, B) {
+            const result = [];
+            for (let i = 0; i < A[0].length; i++) {
+                result[i] = [];
+                for (let j = 0; j < B[0].length; j++) {
+                    let sum = 0;
+                    for (let k = 0; k < A.length; k++) {
+                        sum += A[k][i] * B[k][j];
+                    }
+                    result[i][j] = sum;
+                }
+            }
+            return result;
+        }
+        
+        function powerIteration(A, iterations = 100, tolerance = 1e-10) {
+            const n = A.length;
+            let x = Array(n).fill(0).map(() => Math.random());
+            
+            let lambda = 0;
+            for (let iter = 0; iter < iterations; iter++) {
+                const y = matrixVectorMultiply(A, x);
+                const newLambda = vectorDot(y, x) / vectorDot(x, x);
+                
+                x = normalizeVector(y);
+                
+                if (Math.abs(newLambda - lambda) < tolerance) {
+                    break;
+                }
+                
+                lambda = newLambda;
+            }
+            
+            return { eigenvalue: lambda, eigenvector: x };
+        }
+        
+        function matrixVectorMultiply(A, x) {
+            const m = A.length;
+            const n = A[0].length;
+            const result = Array(m).fill(0);
+            
+            for (let i = 0; i < m; i++) {
+                for (let j = 0; j < n; j++) {
+                    result[i] += A[i][j] * x[j];
+                }
+            }
+            
+            return result;
+        }
+        
+        function vectorDot(a, b) {
+            return a.reduce((sum, val, i) => sum + val * b[i], 0);
+        }
+        
+        function normalizeVector(v) {
+            const norm = Math.sqrt(v.reduce((sum, val) => sum + val * val, 0));
+            return v.map(val => val / norm);
+        }
+        
+        function transformPoint(x, y) {
+            if (!calibrationMatrix) return { x, y };
+            
+            const w = calibrationMatrix[2][0] * x + calibrationMatrix[2][1] * y + calibrationMatrix[2][2];
+            const transformedX = (calibrationMatrix[0][0] * x + calibrationMatrix[0][1] * y + calibrationMatrix[0][2]) / w;
+            const transformedY = (calibrationMatrix[1][0] * x + calibrationMatrix[1][1] * y + calibrationMatrix[1][2]) / w;
+            
+            return { x: transformedX, y: transformedY };
+        }
+        
+        function updateScore() {
+            const scoreElement = document.getElementById("score-display");
+            if (scoreElement) {
+                scoreElement.innerText = `Score: ${score}`;
+            }
+        }
+        
+        function startGame() {
+            score = 0;
+            gameContainer.style.display = "block";
+            gameContainer.innerHTML = "";
+            
+            const scoreDisplay = document.createElement("div");
+            scoreDisplay.id = "score-display";
+            scoreDisplay.style.position = "fixed";
+            scoreDisplay.style.top = "70px";
+            scoreDisplay.style.left = "50%";
+            scoreDisplay.style.transform = "translateX(-50%)";
+            scoreDisplay.style.fontSize = "24px";
+            scoreDisplay.style.fontWeight = "bold";
+            scoreDisplay.style.color = "white";
+            scoreDisplay.style.textShadow = "0 0 10px rgba(0, 255, 0, 0.7)";
+            scoreDisplay.style.zIndex = "10";
+            scoreDisplay.innerText = "Score: 0";
+            document.body.appendChild(scoreDisplay);
+            
+            for (let i = 0; i < 5; i++) {
+                createGameTarget();
+            }
+            
+            statusText.innerText = "Game started! Point and make noise to shoot targets.";
+        }
+        
+        function createGameTarget() {
+            const target = document.createElement("div");
+            target.className = "game-target target";
+            
+            const size = 60;
+            target.style.width = `${size}px`;
+            target.style.height = `${size}px`;
+            target.style.backgroundColor = "#ff0000";
+            target.style.transition = "all 0.3s ease";
+            target.style.boxShadow = "0 0 20px rgba(255, 0, 0, 0.7)";
+            target.style.display = "flex";
+            target.style.justifyContent = "center";
+            target.style.alignItems = "center";
+            target.style.fontSize = "18px";
+            target.style.fontWeight = "bold";
+            target.innerHTML = "+100";
+            
+            const x = Math.random() * (window.innerWidth - 200) + 100;
+            const y = Math.random() * (window.innerHeight - 200) + 100;
+            
+            target.style.left = `${x}px`;
+            target.style.top = `${y}px`;
+            
+            gameContainer.appendChild(target);
+            
+            setTimeout(() => {
+                if (target.parentNode) {
+                    createGameTarget();
+                    target.remove();
+                }
+            }, 5000);
+        }
+
+        async function loadModel() {
+            const model = handPoseDetection.SupportedModels.MediaPipeHands;
+            const detectorConfig = {
+                runtime: 'mediapipe',
+                modelType: 'full',
+                maxHands: 1,
+                solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands'
+            };
+            
+            detector = await handPoseDetection.createDetector(model, detectorConfig);
+            statusText.innerText = "Model loaded. Click Start.";
+        }
+
+        function startTracking() {
+            if (detector) {
+                tracking = true;
+                canvas.style.display = "block";
+                trackHands();
+                statusText.innerText = "Tracking index finger...";
+                document.getElementById("calibrate-btn").disabled = false;
+                setupAudio();
+            }
+        }
+
+        function stopTracking() {
+            tracking = false;
+            statusText.innerText = "Tracking stopped.";
+            canvas.style.display = "none";
+        }
+
+        async function trackHands() {
+            if (!tracking) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const hands = await detector.estimateHands(video);
+            
+            if (hands && hands.length > 0) {
+                const hand = hands[0];
+                const keypoints = hand.keypoints;
+                
+                if (keypoints && keypoints.length >= 9) {
+                    const indexTip = keypoints[8];
+                    indexFingerTip = indexTip;
+                    
+                    const wrist = keypoints[0];
+                    const indexMcp = keypoints[5];
+                    
+                    ctx.strokeStyle = "#00FF00";
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(wrist.x, wrist.y);
+                    ctx.lineTo(indexMcp.x, indexMcp.y);
+                    ctx.lineTo(indexTip.x, indexTip.y);
+                    ctx.stroke();
+                    
+                    ctx.fillStyle = "#00FF00";
+                    ctx.beginPath();
+                    ctx.arc(indexTip.x, indexTip.y, 10, 0, 2 * Math.PI);
+                    ctx.fill();
+                    
+                    if (calibrationMatrix) {
+                        const screenPoint = transformPoint(indexTip.x, indexTip.y);
+                        crosshair.style.left = `${screenPoint.x - 15}px`;
+                        crosshair.style.top = `${screenPoint.y - 15}px`;
+                    }
+                }
+            } else {
+                indexFingerTip = null;
+            }
+            
+            requestAnimationFrame(trackHands);
+        }
+
+        async function enableWebGL() {
+            const backend = await tf.getBackend();
+            if (backend !== "webgl") {
+                await tf.setBackend("webgl");
+                console.log("WebGL enabled for better performance");
+            }
+        }
+
+        async function init() {
+            try {
+                await enableWebGL();
+                await setupCamera();
+                statusText.innerText = "Loading hand tracking model...";
+                await loadModel();
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            } catch (error) {
+                console.error("Error initializing:", error);
+                statusText.innerText = "Error: " + error.message;
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            if (video.videoWidth && video.videoHeight) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            }
+        });
+
+        init();
+    </script>
+</body>
+</html>
