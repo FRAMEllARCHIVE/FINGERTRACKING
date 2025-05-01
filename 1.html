@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finger Tracking</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial, sans-serif;
+            background-color: black;
+        }
+        video {
+            position: fixed;
+            bottom: 8%;
+            left: 50%;
+            width: 120px;
+            height: 120px;
+            border: 4px solid white;
+            border-radius: 50%;
+            object-fit: cover;
+            transform: translate(-50%, -50%);
+            z-index: 2;
+        }
+        canvas {
+            position: fixed;
+            top: 50%;
+            left: 50%; 
+            z-index: 1;
+            transform: translate(-50%, -50%); 
+            border: 4px solid white;
+            margin-top: 10px;
+            display: block;
+            margin: auto;
+            border-radius: 22px;
+        }
+        #controls {
+            margin-top: 44px;
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+        button {
+            font-size: 16px;
+            padding: 10px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #status {
+            font-size: 18px;
+            margin-top: 10px;
+            font-weight: bold;
+            color: white;
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <div id="controls">
+        <button onclick="startTracking()">Start Tracking</button>
+        <button onclick="stopTracking()">Stop Tracking</button>
+    </div>
+
+    <p id="status">Tracking status: <span id="tracking-status">Loading model...</span></p>
+
+    <script>
+        let video = document.getElementById("video");
+        let canvas = document.getElementById("canvas");
+        let ctx = canvas.getContext("2d");
+        let statusText = document.getElementById("tracking-status");
+
+        let detector;
+        let tracking = false;
+        let hands = null;
+
+        // Colors for each finger
+        const fingerColors = [
+            "#FF0000", // Thumb - Red
+            "#00FF00", // Index - Green
+            "#0000FF", // Middle - Blue
+            "#FFFF00", // Ring - Yellow
+            "#FF00FF"  // Pinky - Magenta
+        ];
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    width: 640, 
+                    height: 480
+                } 
+            });
+            video.srcObject = stream;
+            return new Promise(resolve => video.onloadeddata = resolve);
+        }
+
+        async function loadModel() {
+            const model = handPoseDetection.SupportedModels.MediaPipeHands;
+            const detectorConfig = {
+                runtime: 'mediapipe',
+                modelType: 'full',
+                maxHands: 2,
+                solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands'
+            };
+            
+            detector = await handPoseDetection.createDetector(model, detectorConfig);
+            statusText.innerText = "Model loaded. Click Start.";
+        }
+
+        function startTracking() {
+            if (detector) {
+                tracking = true;
+                canvas.style.display = "block";
+                trackHands();
+                statusText.innerText = "Tracking fingers...";
+            }
+        }
+
+        function stopTracking() {
+            tracking = false;
+            statusText.innerText = "Tracking stopped.";
+            canvas.style.display = "none";
+        }
+
+        async function trackHands() {
+            if (!tracking) return;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw video feed
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Detect hands
+            hands = await detector.estimateHands(video);
+            
+            if (hands && hands.length > 0) {
+                // Count extended fingers
+                let extendedFingers = 0;
+                hands.forEach(hand => {
+                    const keypoints = hand.keypoints;
+                    for (let finger = 0; finger < 5; finger++) {
+                        const wristIdx = 0;
+                        const baseIdx = finger === 0 ? 1 : finger * 4 + 1;
+                        const tipIdx = finger * 4 + 4;
+                        
+                        const wrist = keypoints[wristIdx];
+                        const base = keypoints[baseIdx];
+                        const tip = keypoints[tipIdx];
+                        
+                        if (wrist && base && tip) {
+                            let isExtended = false;
+                            
+                            if (finger === 0) { // Thumb
+                                const wristToBase = {
+                                    x: base.x - wrist.x,
+                                    y: base.y - wrist.y
+                                };
+                                const baseToTip = {
+                                    x: tip.x - base.x,
+                                    y: tip.y - base.y
+                                };
+                                
+                                const dotProduct = wristToBase.x * baseToTip.x + wristToBase.y * baseToTip.y;
+                                const wristToBaseMag = Math.sqrt(wristToBase.x * wristToBase.x + wristToBase.y * wristToBase.y);
+                                const baseToTipMag = Math.sqrt(baseToTip.x * baseToTip.x + baseToTip.y * baseToTip.y);
+                                
+                                const angleRad = Math.acos(dotProduct / (wristToBaseMag * baseToTipMag));
+                                const angleDeg = angleRad * (180 / Math.PI);
+                                
+                                isExtended = angleDeg > 30;
+                            } else {
+                                const wristToTipDistance = Math.sqrt(
+                                    Math.pow(tip.x - wrist.x, 2) + 
+                                    Math.pow(tip.y - wrist.y, 2)
+                                );
+                                
+                                const wristToBaseDistance = Math.sqrt(
+                                    Math.pow(base.x - wrist.x, 2) + 
+                                    Math.pow(base.y - wrist.y, 2)
+                                );
+                                
+                                isExtended = wristToTipDistance > wristToBaseDistance * 1.2;
+                            }
+                            
+                            if (isExtended) {
+                                extendedFingers++;
+                            }
+                        }
+                    }
+                });
+                
+                // Update status text with extended fingers count
+                statusText.innerText = `Detected ${hands.length} hand(s) - ${extendedFingers} finger(s) extended`;
+                
+                // Process each hand
+                hands.forEach((hand) => {
+                    const keypoints = hand.keypoints;
+                    const handedness = hand.handedness; // 'Left' or 'Right'
+                    
+                    // Draw small dots at all landmark points (without labels)
+                    for (let i = 0; i < keypoints.length; i++) {
+                        const keypoint = keypoints[i];
+                        
+                        // Draw small keypoint
+                        ctx.fillStyle = "rgba(255, 255, 255, 0.3)"; // semi-transparent white
+                        ctx.beginPath();
+                        ctx.arc(keypoint.x, keypoint.y, 2, 0, 2 * Math.PI);
+                        ctx.fill();
+                    }
+                    
+                    // Check and highlight only extended fingers
+                    for (let finger = 0; finger < 5; finger++) {
+                        // Get relevant keypoints for each finger
+                        const wristIdx = 0;
+                        const baseIdx = finger === 0 ? 1 : finger * 4 + 1; // Base of finger (different for thumb)
+                        const tipIdx = finger * 4 + 4; // Fingertip
+                        
+                        const wrist = keypoints[wristIdx];
+                        const base = keypoints[baseIdx];
+                        const tip = keypoints[tipIdx];
+                        
+                        if (wrist && base && tip) {
+                            // Determine if finger is extended
+                            let isExtended = false;
+                            
+                            if (finger === 0) { // Thumb has special calculation
+                                // For thumb, check angle between wrist and tip
+                                const wristToBase = {
+                                    x: base.x - wrist.x,
+                                    y: base.y - wrist.y
+                                };
+                                const baseToTip = {
+                                    x: tip.x - base.x,
+                                    y: tip.y - base.y
+                                };
+                                
+                                // Calculate angle between vectors
+                                const dotProduct = wristToBase.x * baseToTip.x + wristToBase.y * baseToTip.y;
+                                const wristToBaseMag = Math.sqrt(wristToBase.x * wristToBase.x + wristToBase.y * wristToBase.y);
+                                const baseToTipMag = Math.sqrt(baseToTip.x * baseToTip.x + baseToTip.y * baseToTip.y);
+                                
+                                // Get angle in radians
+                                const angleRad = Math.acos(dotProduct / (wristToBaseMag * baseToTipMag));
+                                const angleDeg = angleRad * (180 / Math.PI);
+                                
+                                isExtended = angleDeg > 30; // Thumb is extended if angle is greater than 30 degrees
+                            } else {
+                                // For other fingers, compare distance from wrist to fingertip vs. wrist to MCP joint
+                                const wristToTipDistance = Math.sqrt(
+                                    Math.pow(tip.x - wrist.x, 2) + 
+                                    Math.pow(tip.y - wrist.y, 2)
+                                );
+                                
+                                const wristToBaseDistance = Math.sqrt(
+                                    Math.pow(base.x - wrist.x, 2) + 
+                                    Math.pow(base.y - wrist.y, 2)
+                                );
+                                
+                                // If fingertip is further from wrist than base, finger is likely extended
+                                isExtended = wristToTipDistance > wristToBaseDistance * 1.2;
+                            }
+                            
+                            // Only highlight if finger is extended
+                            if (isExtended) {
+                                // Get all joints of the finger
+                                const joints = [];
+                                for (let j = 0; j <= 4; j++) {
+                                    const jointIdx = finger === 0 && j === 0 ? 1 : (finger * 4 + j);
+                                    if (jointIdx < keypoints.length) {
+                                        joints.push(keypoints[jointIdx]);
+                                    }
+                                }
+                                
+                                // Draw line connecting all joints of the finger
+                                ctx.strokeStyle = fingerColors[finger];
+                                ctx.lineWidth = 3;
+                                ctx.beginPath();
+                                ctx.moveTo(wrist.x, wrist.y);
+                                
+                                for (const joint of joints) {
+                                    ctx.lineTo(joint.x, joint.y);
+                                }
+                                
+                                ctx.stroke();
+                                
+                                // Draw fingertip
+                                ctx.fillStyle = fingerColors[finger];
+                                ctx.beginPath();
+                                ctx.arc(tip.x, tip.y, 8, 0, 2 * Math.PI);
+                                ctx.fill();
+                            }
+                        }
+                    }
+                });
+            } else {
+                statusText.innerText = "No hands detected";
+            }
+            
+            requestAnimationFrame(trackHands);
+        }
+
+        async function enableWebGL() {
+            const backend = await tf.getBackend();
+            if (backend !== "webgl") {
+                await tf.setBackend("webgl");
+                console.log("WebGL enabled for better performance");
+            }
+        }
+
+        async function init() {
+            try {
+                await enableWebGL();
+                await setupCamera();
+                statusText.innerText = "Loading hand tracking model...";
+                await loadModel();
+            } catch (error) {
+                console.error("Error initializing:", error);
+                statusText.innerText = "Error: " + error.message;
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
