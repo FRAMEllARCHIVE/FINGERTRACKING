@@ -94,18 +94,16 @@
         let tracking = false;
         let hands = null;
 
-        // Finger names for reference
         const fingerNames = [
             "Thumb", "Index", "Middle", "Ring", "Pinky"
         ];
 
-        // Colors for each finger
         const fingerColors = [
-            "#FF0000", // Thumb - Red
-            "#00FF00", // Index - Green
-            "#0000FF", // Middle - Blue
-            "#FFFF00", // Ring - Yellow
-            "#FF00FF"  // Pinky - Magenta
+            "#FF0000",
+            "#00FF00",
+            "#0000FF",
+            "#FFFF00",
+            "#FF00FF"
         ];
 
         async function setupCamera() {
@@ -150,51 +148,40 @@
         async function trackHands() {
             if (!tracking) return;
 
-            // Clear canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            // Draw video feed
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // Detect hands
             hands = await detector.estimateHands(video);
             
             if (hands && hands.length > 0) {
-                // Show how many hands detected
                 statusText.innerText = `Detected ${hands.length} hand(s)`;
                 
-                // Process each hand
                 hands.forEach((hand) => {
                     const keypoints = hand.keypoints;
-                    const handedness = hand.handedness; // 'Left' or 'Right'
+                    const handedness = hand.handedness;
                     
-                    // Draw all keypoints
                     for (let i = 0; i < keypoints.length; i++) {
                         const keypoint = keypoints[i];
                         
-                        // Draw keypoint
                         ctx.fillStyle = "white";
                         ctx.beginPath();
                         ctx.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
-                        // Label the point with its name
                         ctx.fillStyle = "white";
                         ctx.font = "10px Arial";
                         ctx.fillText(keypoint.name, keypoint.x + 5, keypoint.y - 5);
                     }
                     
-                    // Highlight fingertips and knuckles with different colors for each finger
                     for (let finger = 0; finger < 5; finger++) {
-                        // MediaPipe hand model has specific indices for each finger part
-                        const fingertipIdx = finger * 4 + 4; // fingertip indices: 4, 8, 12, 16, 20
-                        const knuckleIdx = finger * 4 + 2;   // knuckle indices: 2, 6, 10, 14, 18
+                        const fingertipIdx = finger * 4 + 4;
+                        const knuckleIdx = finger * 4 + 2;
                         
                         const fingertip = keypoints[fingertipIdx];
                         const knuckle = keypoints[knuckleIdx];
                         
                         if (fingertip && knuckle) {
-                            // Draw line connecting fingertip to knuckle
                             ctx.strokeStyle = fingerColors[finger];
                             ctx.lineWidth = 2;
                             ctx.beginPath();
@@ -202,26 +189,22 @@
                             ctx.lineTo(knuckle.x, knuckle.y);
                             ctx.stroke();
                             
-                            // Draw fingertip
                             ctx.fillStyle = fingerColors[finger];
                             ctx.beginPath();
                             ctx.arc(fingertip.x, fingertip.y, 8, 0, 2 * Math.PI);
                             ctx.fill();
                             
-                            // Draw knuckle
                             ctx.fillStyle = fingerColors[finger];
                             ctx.beginPath();
                             ctx.arc(knuckle.x, knuckle.y, 6, 0, 2 * Math.PI);
                             ctx.fill();
                             
-                            // Label the finger
                             ctx.fillStyle = "white";
                             ctx.font = "12px Arial";
                             ctx.fillText(fingerNames[finger], fingertip.x + 10, fingertip.y);
                         }
                     }
                     
-                    // Label the hand
                     ctx.fillStyle = "white";
                     ctx.font = "16px Arial";
                     ctx.fillText(handedness, keypoints[0].x, keypoints[0].y - 20);
