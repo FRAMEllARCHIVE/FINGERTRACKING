@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Landmarks Visualization</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial, sans-serif;
+            background-color: black;
+            color: white;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        video {
+            position: fixed;
+            bottom: 8%;
+            left: 50%;
+            width: 120px;
+            height: 120px;
+            border: 4px solid white;
+            border-radius: 50%;
+            object-fit: cover;
+            transform: translate(-50%, -50%);
+            z-index: 2;
+        }
+        canvas {
+            position: fixed;
+            top: 50%;
+            left: 50%; 
+            z-index: 1;
+            transform: translate(-50%, -50%); 
+            border: 4px solid white;
+            margin-top: 10px;
+            display: block;
+            margin: auto;
+            border-radius: 22px;
+        }
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+        button {
+            font-size: 16px;
+            padding: 10px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #status {
+            font-size: 18px;
+            margin-top: 10px;
+            font-weight: bold;
+            color: white;
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+        #legend {
+            position: fixed;
+            top: 60px;
+            left: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 10px;
+            text-align: left;
+            z-index: 3;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <div id="controls">
+        <button onclick="startTracking()">Start Tracking</button>
+        <button onclick="stopTracking()">Stop Tracking</button>
+    </div>
+
+    <p id="status">Tracking status: <span id="tracking-status">Loading model...</span></p>
+
+    <div id="legend">
+        <h3>Landmark Legend</h3>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #FF0000;"></div>
+            <span>Thumb</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #00FF00;"></div>
+            <span>Index Finger</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #0000FF;"></div>
+            <span>Middle Finger</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #FFFF00;"></div>
+            <span>Ring Finger</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #FF00FF;"></div>
+            <span>Pinky Finger</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #FFFFFF;"></div>
+            <span>Wrist/Palm</span>
+        </div>
+    </div>
+
+    <script>
+        let video = document.getElementById("video");
+        let canvas = document.getElementById("canvas");
+        let ctx = canvas.getContext("2d");
+        let statusText = document.getElementById("tracking-status");
+
+        let detector;
+        let tracking = false;
+        let hands = null;
+
+        const fingerColors = [
+            "#FF0000", // Thumb - Red
+            "#00FF00", // Index - Green
+            "#0000FF", // Middle - Blue
+            "#FFFF00", // Ring - Yellow
+            "#FF00FF"  // Pinky - Magenta
+        ];
+
+        const landmarkData = {
+            wrist: { color: "#FFFFFF", size: 10, shape: "circle" },
+            palm: { color: "#FFFFFF", size: 8, shape: "circle" },
+            
+            thumb_cmc: { color: "#FF0000", size: 6, shape: "circle" },
+            thumb_mcp: { color: "#FF0000", size: 7, shape: "circle" },
+            thumb_ip: { color: "#FF0000", size: 8, shape: "circle" },
+            thumb_tip: { color: "#FF0000", size: 10, shape: "star" },
+            
+            index_finger_mcp: { color: "#00FF00", size: 7, shape: "circle" },
+            index_finger_pip: { color: "#00FF00", size: 8, shape: "circle" },
+            index_finger_dip: { color: "#00FF00", size: 9, shape: "circle" },
+            index_finger_tip: { color: "#00FF00", size: 10, shape: "star" },
+            
+            middle_finger_mcp: { color: "#0000FF", size: 7, shape: "circle" },
+            middle_finger_pip: { color: "#0000FF", size: 8, shape: "circle" },
+            middle_finger_dip: { color: "#0000FF", size: 9, shape: "circle" },
+            middle_finger_tip: { color: "#0000FF", size: 10, shape: "star" },
+            
+            ring_finger_mcp: { color: "#FFFF00", size: 7, shape: "circle" },
+            ring_finger_pip: { color: "#FFFF00", size: 8, shape: "circle" },
+            ring_finger_dip: { color: "#FFFF00", size: 9, shape: "circle" },
+            ring_finger_tip: { color: "#FFFF00", size: 10, shape: "star" },
+            
+            pinky_finger_mcp: { color: "#FF00FF", size: 7, shape: "circle" },
+            pinky_finger_pip: { color: "#FF00FF", size: 8, shape: "circle" },
+            pinky_finger_dip: { color: "#FF00FF", size: 9, shape: "circle" },
+            pinky_finger_tip: { color: "#FF00FF", size: 10, shape: "star" }
+        };
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    width: 640, 
+                    height: 480
+                } 
+            });
+            video.srcObject = stream;
+            return new Promise(resolve => video.onloadeddata = resolve);
+        }
+
+        async function loadModel() {
+            const model = handPoseDetection.SupportedModels.MediaPipeHands;
+            const detectorConfig = {
+                runtime: 'mediapipe',
+                modelType: 'full',
+                maxHands: 2,
+                solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands'
+            };
+            
+            detector = await handPoseDetection.createDetector(model, detectorConfig);
+            statusText.innerText = "Model loaded. Click Start.";
+        }
+
+        function startTracking() {
+            if (detector) {
+                tracking = true;
+                canvas.style.display = "block";
+                trackHands();
+                statusText.innerText = "Tracking hands...";
+            }
+        }
+
+        function stopTracking() {
+            tracking = false;
+            statusText.innerText = "Tracking stopped.";
+            canvas.style.display = "none";
+        }
+        
+        function drawStar(ctx, x, y, size, color) {
+            const spikes = 5;
+            const outerRadius = size;
+            const innerRadius = size / 2;
+            
+            ctx.beginPath();
+            ctx.fillStyle = color;
+            
+            for (let i = 0; i < spikes * 2; i++) {
+                const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                const angle = (i * Math.PI) / spikes;
+                
+                const posX = x + Math.cos(angle) * radius;
+                const posY = y + Math.sin(angle) * radius;
+                
+                if (i === 0) {
+                    ctx.moveTo(posX, posY);
+                } else {
+                    ctx.lineTo(posX, posY);
+                }
+            }
+            
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawLandmark(ctx, x, y, data) {
+            if (data.shape === "circle") {
+                ctx.fillStyle = data.color;
+                ctx.beginPath();
+                ctx.arc(x, y, data.size, 0, 2 * Math.PI);
+                ctx.fill();
+            } else if (data.shape === "star") {
+                drawStar(ctx, x, y, data.size, data.color);
+            }
+        }
+
+        async function trackHands() {
+            if (!tracking) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            hands = await detector.estimateHands(video);
+            
+            if (hands && hands.length > 0) {
+                statusText.innerText = `Detected ${hands.length} hand(s)`;
+                
+                hands.forEach((hand) => {
+                    const keypoints = hand.keypoints;
+                    const handedness = hand.handedness;
+                    
+                    for (let i = 0; i < keypoints.length; i++) {
+                        const keypoint = keypoints[i];
+                        const landmarkInfo = landmarkData[keypoint.name] || 
+                                           { color: "#FFFFFF", size: 5, shape: "circle" };
+                        
+                        drawLandmark(ctx, keypoint.x, keypoint.y, landmarkInfo);
+                        
+                        if (keypoint.name.includes("tip")) {
+                            ctx.fillStyle = landmarkInfo.color;
+                            ctx.font = "12px Arial";
+                            ctx.fillText(keypoint.name.split("_")[0], keypoint.x + 10, keypoint.y);
+                        }
+                    }
+                    
+                    ctx.fillStyle = "white";
+                    ctx.font = "16px Arial";
+                    ctx.fillText(handedness, keypoints[0].x, keypoints[0].y - 20);
+                    
+                    const wrist = keypoints.find(kp => kp.name === "wrist");
+                    if (wrist) {
+                        ctx.font = "14px Arial";
+                        ctx.fillText("wrist", wrist.x + 15, wrist.y + 5);
+                    }
+                });
+            } else {
+                statusText.innerText = "No hands detected";
+            }
+            
+            requestAnimationFrame(trackHands);
+        }
+
+        async function enableWebGL() {
+            const backend = await tf.getBackend();
+            if (backend !== "webgl") {
+                await tf.setBackend("webgl");
+                console.log("WebGL enabled for better performance");
+            }
+        }
+
+        async function init() {
+            try {
+                await enableWebGL();
+                await setupCamera();
+                statusText.innerText = "Loading hand tracking model...";
+                await loadModel();
+            } catch (error) {
+                statusText.innerText = "Error: " + error.message;
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
