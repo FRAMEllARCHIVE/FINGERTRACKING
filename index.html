@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finger Tracking</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial, sans-serif;
+            background-color: black;
+        }
+        video {
+            position: fixed;
+            bottom: 8%;
+            left: 50%;
+            width: 120px;
+            height: 120px;
+            border: 4px solid white;
+            border-radius: 50%;
+            object-fit: cover;
+            transform: translate(-50%, -50%);
+            z-index: 2;
+        }
+        canvas {
+            position: fixed;
+            top: 50%;
+            left: 50%; 
+            z-index: 1;
+            transform: translate(-50%, -50%); 
+            border: 4px solid white;
+            margin-top: 10px;
+            display: block;
+            margin: auto;
+            border-radius: 22px;
+        }
+        #controls {
+            margin-top: 44px;
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+        button {
+            font-size: 16px;
+            padding: 10px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #status {
+            font-size: 18px;
+            margin-top: 10px;
+            font-weight: bold;
+            color: white;
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <div id="controls">
+        <button onclick="startTracking()">Start Tracking</button>
+        <button onclick="stopTracking()">Stop Tracking</button>
+    </div>
+
+    <p id="status">Tracking status: <span id="tracking-status">Loading model...</span></p>
+
+    <script>
+        let video = document.getElementById("video");
+        let canvas = document.getElementById("canvas");
+        let ctx = canvas.getContext("2d");
+        let statusText = document.getElementById("tracking-status");
+
+        let detector;
+        let tracking = false;
+        let hands = null;
+
+        // Finger names for reference
+        const fingerNames = [
+            "Thumb", "Index", "Middle", "Ring", "Pinky"
+        ];
+
+        // Colors for each finger
+        const fingerColors = [
+            "#FF0000", // Thumb - Red
+            "#00FF00", // Index - Green
+            "#0000FF", // Middle - Blue
+            "#FFFF00", // Ring - Yellow
+            "#FF00FF"  // Pinky - Magenta
+        ];
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    width: 640, 
+                    height: 480
+                } 
+            });
+            video.srcObject = stream;
+            return new Promise(resolve => video.onloadeddata = resolve);
+        }
+
+        async function loadModel() {
+            const model = handPoseDetection.SupportedModels.MediaPipeHands;
+            const detectorConfig = {
+                runtime: 'mediapipe',
+                modelType: 'full',
+                maxHands: 2,
+                solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands'
+            };
+            
+            detector = await handPoseDetection.createDetector(model, detectorConfig);
+            statusText.innerText = "Model loaded. Click Start.";
+        }
+
+        function startTracking() {
+            if (detector) {
+                tracking = true;
+                canvas.style.display = "block";
+                trackHands();
+                statusText.innerText = "Tracking fingers...";
+            }
+        }
+
+        function stopTracking() {
+            tracking = false;
+            statusText.innerText = "Tracking stopped.";
+            canvas.style.display = "none";
+        }
+
+        async function trackHands() {
+            if (!tracking) return;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw video feed
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Detect hands
+            hands = await detector.estimateHands(video);
+            
+            if (hands && hands.length > 0) {
+                // Show how many hands detected
+                statusText.innerText = `Detected ${hands.length} hand(s)`;
+                
+                // Process each hand
+                hands.forEach((hand) => {
+                    const keypoints = hand.keypoints;
+                    const handedness = hand.handedness; // 'Left' or 'Right'
+                    
+                    // Draw all keypoints
+                    for (let i = 0; i < keypoints.length; i++) {
+                        const keypoint = keypoints[i];
+                        
+                        // Draw keypoint
+                        ctx.fillStyle = "white";
+                        ctx.beginPath();
+                        ctx.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI);
+                        ctx.fill();
+                        
+                        // Label the point with its name
+                        ctx.fillStyle = "white";
+                        ctx.font = "10px Arial";
+                        ctx.fillText(keypoint.name, keypoint.x + 5, keypoint.y - 5);
+                    }
+                    
+                    // Highlight fingertips and knuckles with different colors for each finger
+                    for (let finger = 0; finger < 5; finger++) {
+                        // MediaPipe hand model has specific indices for each finger part
+                        const fingertipIdx = finger * 4 + 4; // fingertip indices: 4, 8, 12, 16, 20
+                        const knuckleIdx = finger * 4 + 2;   // knuckle indices: 2, 6, 10, 14, 18
+                        
+                        const fingertip = keypoints[fingertipIdx];
+                        const knuckle = keypoints[knuckleIdx];
+                        
+                        if (fingertip && knuckle) {
+                            // Draw line connecting fingertip to knuckle
+                            ctx.strokeStyle = fingerColors[finger];
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.moveTo(fingertip.x, fingertip.y);
+                            ctx.lineTo(knuckle.x, knuckle.y);
+                            ctx.stroke();
+                            
+                            // Draw fingertip
+                            ctx.fillStyle = fingerColors[finger];
+                            ctx.beginPath();
+                            ctx.arc(fingertip.x, fingertip.y, 8, 0, 2 * Math.PI);
+                            ctx.fill();
+                            
+                            // Draw knuckle
+                            ctx.fillStyle = fingerColors[finger];
+                            ctx.beginPath();
+                            ctx.arc(knuckle.x, knuckle.y, 6, 0, 2 * Math.PI);
+                            ctx.fill();
+                            
+                            // Label the finger
+                            ctx.fillStyle = "white";
+                            ctx.font = "12px Arial";
+                            ctx.fillText(fingerNames[finger], fingertip.x + 10, fingertip.y);
+                        }
+                    }
+                    
+                    // Label the hand
+                    ctx.fillStyle = "white";
+                    ctx.font = "16px Arial";
+                    ctx.fillText(handedness, keypoints[0].x, keypoints[0].y - 20);
+                });
+            } else {
+                statusText.innerText = "No hands detected";
+            }
+            
+            requestAnimationFrame(trackHands);
+        }
+
+        async function enableWebGL() {
+            const backend = await tf.getBackend();
+            if (backend !== "webgl") {
+                await tf.setBackend("webgl");
+                console.log("WebGL enabled for better performance");
+            }
+        }
+
+        async function init() {
+            try {
+                await enableWebGL();
+                await setupCamera();
+                statusText.innerText = "Loading hand tracking model...";
+                await loadModel();
+            } catch (error) {
+                console.error("Error initializing:", error);
+                statusText.innerText = "Error: " + error.message;
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
