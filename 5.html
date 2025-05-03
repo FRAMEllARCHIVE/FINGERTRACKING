@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finger Pointer (Magnified)</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #222;
+            color: white;
+            font-family: sans-serif;
+        }
+
+        #video-container {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            border: 2px solid #00ff00;
+            z-index: 10;
+        }
+
+        video {
+            display: block;
+            width: 160px;
+            height: 120px;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            visibility: hidden;
+            z-index: 11;
+        }
+
+        #controls {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 12;
+        }
+
+        button {
+            font-size: 16px;
+            padding: 8px 15px;
+            cursor: pointer;
+            background-color: #00cc00;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+        button:hover {
+            background-color: #00ff00;
+        }
+        button:disabled {
+             background-color: #555;
+             box-shadow: none;
+             cursor: not-allowed;
+        }
+
+        #status {
+            position: fixed;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 12;
+            background-color: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        .crosshair {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 2px solid lime;
+            display: none;
+            z-index: 5;
+            pointer-events: none;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.7);
+            transform: translate(-50%, -50%);
+        }
+
+        .crosshair::before, .crosshair::after {
+            content: "";
+            position: absolute;
+            background-color: lime;
+            box-shadow: 0 0 5px lime;
+        }
+
+        .crosshair::before {
+            width: 2px;
+            height: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .crosshair::after {
+            width: 100%;
+            height: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="controls">
+        <button id="start-btn" onclick="startTracking()" disabled>Start Tracking</button>
+    </div>
+
+    <p id="status">Loading model...</p>
+
+    <div id="crosshair" class="crosshair"></div>
+
+    <script>
+        const video = document.getElementById("video");
+        const videoContainer = document.getElementById("video-container");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const statusText = document.getElementById("status");
+        const crosshair = document.getElementById("crosshair");
+        const startBtn = document.getElementById("start-btn");
+
+        let detector;
+        let tracking = false;
+        let rafId;
+
+        const activeZoneScale = 0.4;
+
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 },
+                    audio: false
+                });
+                video.srcObject = stream;
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        canvas.width = video.offsetWidth;
+                        canvas.height = video.offsetHeight;
+                        resolve();
+                    };
+                });
+            } catch (error) {
+                console.error("Error accessing camera:", error);
+                statusText.innerText = "Error: Could not access camera. " + error.message;
+                throw error;
+            }
+        }
+
+        async function loadModel() {
+            statusText.innerText = "Loading hand tracking model...";
+            try {
+                const model = handPoseDetection.SupportedModels.MediaPipeHands;
+                const detectorConfig = {
+                    runtime: 'mediapipe',
+                    solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands',
+                    modelType: 'lite',
+                    maxHands: 1
+                };
+                detector = await handPoseDetection.createDetector(model, detectorConfig);
+                statusText.innerText = "Model loaded. Ready to start.";
+                startBtn.disabled = false;
+            } catch (error) {
+                console.error("Error loading model:", error);
+                statusText.innerText = "Error: Could not load model. " + error.message;
+                throw error;
+            }
+        }
+
+        function startTracking() {
+            if (!detector) {
+                statusText.innerText = "Error: Model not loaded.";
+                return;
+            }
+            tracking = true;
+            startBtn.disabled = true;
+            statusText.innerText = "Tracking active...";
+            trackHand();
+        }
+
+        async function trackHand() {
+            if (!tracking) {
+                 if (rafId) cancelAnimationFrame(rafId);
+                 crosshair.style.display = 'none';
+                 startBtn.disabled = false;
+                 statusText.innerText = "Tracking stopped.";
+                 return;
+            }
+
+            let hands = [];
+            try {
+                 hands = await detector.estimateHands(video, { flipHorizontal: false });
+            } catch (error) {
+                 console.error("Error during hand estimation:", error);
+                 statusText.innerText = "Error during estimation. Retrying...";
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (hands.length > 0) {
+                const keypoints = hands[0].keypoints;
+                const indexTip = keypoints.find(kp => kp.name === 'index_finger_tip');
+
+                if (indexTip && video.videoWidth > 0 && video.videoHeight > 0) {
+
+                    const videoWidth = video.videoWidth;
+                    const videoHeight = video.videoHeight;
+
+                    const zoneWidth = videoWidth * activeZoneScale;
+                    const zoneHeight = videoHeight * activeZoneScale;
+                    const zoneLeft = (videoWidth - zoneWidth) / 2;
+                    const zoneTop = (videoHeight - zoneHeight) / 2;
+                    const zoneRight = zoneLeft + zoneWidth;
+                    const zoneBottom = zoneTop + zoneHeight;
+
+                    const tipX = indexTip.x;
+                    const tipY = indexTip.y;
+
+                    if (tipX >= zoneLeft && tipX <= zoneRight && tipY >= zoneTop && tipY <= zoneBottom) {
+                        
+                        const relativeZoneX = (tipX - zoneLeft) / zoneWidth;
+                        const relativeZoneY = (tipY - zoneTop) / zoneHeight;
+
+                        // Flip X relative position to account for CSS mirroring
+                        const flippedRelativeZoneX = 1.0 - relativeZoneX;
+
+                        // Clamp values just in case to avoid going slightly outside 0-1
+                        const clampedX = Math.max(0, Math.min(1, flippedRelativeZoneX));
+                        const clampedY = Math.max(0, Math.min(1, relativeZoneY));
+
+                        // Map zone-relative position to full screen
+                        const screenX = clampedX * window.innerWidth;
+                        const screenY = clampedY * window.innerHeight;
+
+                        crosshair.style.left = `${screenX}px`;
+                        crosshair.style.top = `${screenY}px`;
+                        crosshair.style.display = 'block';
+
+                    } else {
+                         crosshair.style.display = 'none';
+                    }
+
+                } else {
+                    crosshair.style.display = 'none';
+                }
+            } else {
+                crosshair.style.display = 'none';
+            }
+
+            rafId = requestAnimationFrame(trackHand);
+        }
+
+        async function init() {
+            try {
+                await setupCamera();
+                await loadModel();
+            } catch (error) {
+                console.error("Initialization failed:", error);
+            }
+        }
+
+         window.addEventListener('resize', () => {
+             if (video.readyState >= 2) {
+                 canvas.width = video.offsetWidth;
+                 canvas.height = video.offsetHeight;
+             }
+         });
+
+        init();
+
+    </script>
+</body>
+</html>
